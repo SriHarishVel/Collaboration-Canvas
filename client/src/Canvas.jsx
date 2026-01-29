@@ -1,50 +1,56 @@
 import { useEffect, useRef } from "react";
+import { redrawCanvas } from "./canvasLogic";
 
 export default function Canvas() {
   const canvasRef = useRef(null);
   const isDrawingRef = useRef(false);
-  const lastPointRef = useRef(null);
+  const currentStrokeRef = useRef(null);
+  const strokesRef = useRef([]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
 
-    canvas.width = window.innerWidth-40;
-    canvas.height = window.innerHeight-40;
-
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    ctx.lineWidth = 20;
-    ctx.strokeStyle = "#000";
+    canvas.width = window.innerWidth - 40;
+    canvas.height = window.innerHeight - 40;
 
     function getPoint(e) {
       return {
-        x: e.clientX,
-        y: e.clientY
+        x: e.offsetX,
+        y: e.offsetY
       };
     }
 
     function handleMouseDown(e) {
       isDrawingRef.current = true;
-      lastPointRef.current = getPoint(e);
+
+      currentStrokeRef.current = {
+        color: "#000",
+        width: 4,
+        points: [getPoint(e)]
+      };
     }
 
     function handleMouseMove(e) {
       if (!isDrawingRef.current) return;
 
-      const currentPoint = getPoint(e);
+      currentStrokeRef.current.points.push(getPoint(e));
 
-      ctx.beginPath();
-      ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);
-      ctx.lineTo(currentPoint.x, currentPoint.y);
-      ctx.stroke();
+      const allStrokes = [
+        ...strokesRef.current,
+        currentStrokeRef.current
+      ];
 
-      lastPointRef.current = currentPoint;
+      redrawCanvas(ctx, allStrokes, canvas);
     }
 
+
     function handleMouseUp() {
+      if (!isDrawingRef.current) return;
+
+      strokesRef.current.push(currentStrokeRef.current);
+      currentStrokeRef.current = null;
       isDrawingRef.current = false;
-      lastPointRef.current = null;
     }
 
     canvas.addEventListener("mousedown", handleMouseDown);
@@ -58,5 +64,22 @@ export default function Canvas() {
     };
   }, []);
 
-  return <canvas ref={canvasRef} />;
+  function handleUndo() {
+    strokesRef.current.pop();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    redrawCanvas(ctx, strokesRef.current, canvas);
+  }
+
+  return (
+    <>
+      <button
+        onClick={handleUndo}
+        style={{ position: "absolute", top: 20, left: 20 }}
+      >
+        Undo
+      </button>
+      <canvas ref={canvasRef} />
+    </>
+  );
 }
