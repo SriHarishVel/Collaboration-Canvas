@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { redrawCanvas } from "./canvasLogic";
+import { socket } from "./websocket";
 
 export default function Canvas() {
   const canvasRef = useRef(null);
@@ -15,9 +16,13 @@ export default function Canvas() {
     canvas.height = window.innerHeight - 40;
 
     function getPoint(e) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+
       return {
-        x: e.offsetX,
-        y: e.offsetY
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY
       };
     }
 
@@ -44,14 +49,20 @@ export default function Canvas() {
       redrawCanvas(ctx, allStrokes, canvas);
     }
 
-
     function handleMouseUp() {
       if (!isDrawingRef.current) return;
+
+      socket.emit("stroke", currentStrokeRef.current);
 
       strokesRef.current.push(currentStrokeRef.current);
       currentStrokeRef.current = null;
       isDrawingRef.current = false;
     }
+
+    socket.on("stroke", (stroke) => {
+      strokesRef.current.push(stroke);
+      redrawCanvas(ctx, strokesRef.current, canvas);
+    });
 
     canvas.addEventListener("mousedown", handleMouseDown);
     canvas.addEventListener("mousemove", handleMouseMove);
@@ -61,6 +72,8 @@ export default function Canvas() {
       canvas.removeEventListener("mousedown", handleMouseDown);
       canvas.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
+
+      socket.off("stroke");
     };
   }, []);
 
