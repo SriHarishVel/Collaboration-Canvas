@@ -12,15 +12,18 @@ const io = new Server(server, {
 });
 
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+  const roomId = socket.handshake.query.room || "default";
+
+  socket.join(roomId);
+  console.log(`User ${socket.id} joined room ${roomId}`);
 
   socket.on("stroke", (stroke) => {
-    // Send the stroke to all other connected clients
-    socket.broadcast.emit("stroke", stroke);
+    // Send the stroke to all other connected clients in the same room
+    socket.to(roomId).emit("stroke", stroke);
   });
 
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
+    console.log(`User disconnected: ${socket.id} from room ${roomId}`);
   });
 });
 
