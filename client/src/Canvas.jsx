@@ -1,14 +1,30 @@
+/**
+ * Canvas Component
+ * 
+ * Main collaborative drawing interface with integrated room management.
+ * Handles room creation, joining, drawing, and real-time collaboration.
+ */
+
 import { useEffect, useRef, useState } from "react";
 import { redrawCanvas } from "./canvasLogic";
 import { io } from "socket.io-client";
 
-function Canvas({ roomId, userId }) {
+function Canvas() {
+  // Room state management
+  const [joined, setJoined] = useState(false);
+  const [roomId, setRoomId] = useState('');
+  const [userId, setUserId] = useState('');
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [mode, setMode] = useState(null); // 'create' or 'join'
+  const [roomInput, setRoomInput] = useState('');
+  const [userInput, setUserInput] = useState('');
+
+  // Canvas and drawing state
   const canvasRef = useRef(null);
   const socketRef = useRef(null);
   const isDrawingRef = useRef(false);
   const currentStrokeRef = useRef(null);
   const strokesRef = useRef([]);
-  
   const [ghostCursors, setGhostCursors] = useState({});
   const [userLabels, setUserLabels] = useState({});
   const [users, setUsers] = useState([]);
@@ -16,23 +32,101 @@ function Canvas({ roomId, userId }) {
   const [currentSize, setCurrentSize] = useState(3);
   const [undoDisabled, setUndoDisabled] = useState(true);
   const [redoDisabled, setRedoDisabled] = useState(true);
+  
 
-  const userColors = {
-    'User A': '#FF6B6B',
-    'User B': '#4ECDC4',
-    'User C': '#45B7D1',
-    'User D': '#FFA07A',
-    'User E': '#98D8C8',
-    'User F': '#F7DC6F',
-    'User G': '#BB8FCE',
-    'User H': '#85C1E2'
-  };
+  // Predefined color palette for users
+  const userColorPalette = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2'];
+  const userColorMapRef = useRef({});
+  const colorIndexMapRef = useRef({});
 
+  /**
+   * Assign a unique color to each user based on their username
+   */
   const getColorForUser = (username) => {
-    return userColors[username] || `#${Math.floor(Math.random()*16777215).toString(16)}`;
+    if (!username) return '#000000';
+    
+    if (!userColorMapRef.current[username]) {
+      // Assign colors in order based on when they're first seen
+      const assignedCount = Object.keys(userColorMapRef.current).length;
+      const colorIndex = assignedCount % userColorPalette.length;
+      userColorMapRef.current[username] = userColorPalette[colorIndex];
+      colorIndexMapRef.current[username] = colorIndex;
+    }
+    return userColorMapRef.current[username];
   };
 
+  /**
+   * Generate a random room ID
+   */
+  const generateRoomId = () => {
+    return 'room-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+  };
+
+  /**
+   * Handle creating a new room
+   */
+  const handleCreateRoom = () => {
+    if (userInput.trim()) {
+      const newRoomId = generateRoomId();
+      setRoomId(newRoomId);
+      setUserId(userInput);
+      setJoined(true);
+      setShowJoinModal(false);
+      setMode(null);
+      setUserInput('');
+    }
+  };
+
+  /**
+   * Handle joining an existing room
+   */
+  const handleJoinRoom = () => {
+    if (roomInput.trim() && userInput.trim()) {
+      setRoomId(roomInput);
+      setUserId(userInput);
+      setJoined(true);
+      setShowJoinModal(false);
+      setMode(null);
+      setRoomInput('');
+      setUserInput('');
+    }
+  };
+
+  /**
+   * Handle leaving the current room
+   */
+  const handleLeaveRoom = () => {
+    socketRef.current?.disconnect();
+    setJoined(false);
+    setRoomId('');
+    setUserId('');
+    setUsers([]);
+    setGhostCursors({});
+    setUserLabels({});
+    strokesRef.current = [];
+    setShowJoinModal(false);
+    setMode(null);
+  };
+
+  /**
+   * Handle keyboard shortcuts for room forms
+   */
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      if (mode === 'create') {
+        handleCreateRoom();
+      } else if (mode === 'join') {
+        handleJoinRoom();
+      }
+    }
+  };
+
+  /**
+   * Initialize WebSocket connection when room is joined
+   */
   useEffect(() => {
+    if (!joined || !roomId || !userId) return;
+
     socketRef.current = io("http://localhost:3001", {
       query: { room: roomId }
     });
@@ -47,17 +141,20 @@ function Canvas({ roomId, userId }) {
     return () => {
       socket.off("connect");
     };
-  }, [roomId, userId]);
+  }, [roomId, userId, joined]);
 
   useEffect(() => {
+    if (!joined || !canvasRef.current || !socketRef.current) return;
+
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
     const socket = socketRef.current;
 
-    // Set canvas size accounting for the three-panel layout
+    // Set canvas size to match the container
     const centerPanel = canvas.parentElement;
-    canvas.width = centerPanel.clientWidth;
-    canvas.height = centerPanel.clientHeight;
+    const rect = centerPanel.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
 
     function getPoint(e) {
       const rect = canvas.getBoundingClientRect();
@@ -70,13 +167,15 @@ function Canvas({ roomId, userId }) {
       };
     }
 
+
     function handleMouseDown(e) {
       isDrawingRef.current = true;
       currentStrokeRef.current = {
         color: currentColor,
         width: currentSize,
         points: [getPoint(e)],
-        userId: userId
+        userId: userId,
+        timestamp: Date.now()
       };
     }
 
@@ -109,6 +208,8 @@ function Canvas({ roomId, userId }) {
       }
     }
 
+    
+
     function updateUndoRedoButtons() {
       const hasOwnStrokes = strokesRef.current.some(s => s.userId === userId);
       setUndoDisabled(!hasOwnStrokes);
@@ -126,8 +227,14 @@ function Canvas({ roomId, userId }) {
       redrawCanvas(ctx, strokesRef.current, canvas);
       updateUndoRedoButtons();
       
-      if (data.canRedo !== undefined) {
-        setRedoDisabled(!data.canRedo);
+      // Update button states only for current user
+      if (data.userId === socketRef.current.id) {
+        if (data.canUndo !== undefined) {
+          setUndoDisabled(!data.canUndo);
+        }
+        if (data.canRedo !== undefined) {
+          setRedoDisabled(!data.canRedo);
+        }
       }
     });
 
@@ -176,6 +283,7 @@ function Canvas({ roomId, userId }) {
       canvas.removeEventListener("mousedown", handleMouseDown);
       canvas.removeEventListener("mousemove", handleMouseMove);
       canvas.removeEventListener("mouseleave", handleMouseLeave);
+      canvas.removeEventListener("wheel", handleWheel);
       window.removeEventListener("mouseup", handleMouseUp);
 
       socket.off("stroke");
@@ -184,19 +292,21 @@ function Canvas({ roomId, userId }) {
       socket.off("user-disconnected");
       socket.off("redo-state");
     };
-  }, [currentColor, currentSize, userId]);
+  }, [currentColor, currentSize, roomId, userId, joined]);
 
   function handleUndo() {
+    console.log("Undo clicked by user:", userId);
     socketRef.current?.emit("undo");
   }
 
   function handleRedo() {
+    console.log("Redo clicked by user:", userId);
     socketRef.current?.emit("redo");
   }
 
   function handleClear() {
-    if (window.confirm('Are you sure you want to clear the entire canvas?')) {
-      socketRef.current?.emit("clear-canvas");
+    if (window.confirm('Are you sure you want to clear YOUR drawings from this canvas?')) {
+      socketRef.current?.emit("clear-canvas", { userId });
     }
   }
 
@@ -205,13 +315,183 @@ function Canvas({ roomId, userId }) {
     alert('Copied to clipboard!');
   };
 
-  const getShareLink = () => {
-    return `${window.location.origin}?room=${roomId}`;
-  };
+  // If not joined, show the join/create modal overlay
+  if (!joined) {
+    return (
+      <div className="app-container">
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h1>🎨 Collaborative Canvas</h1>
+            <p className="modal-subtitle">Real-time collaborative drawing</p>
+
+            {!mode ? (
+              <div className="mode-selection">
+                <button className="mode-btn create-btn" onClick={() => setMode('create')}>
+                  ➕ Create New Room
+                </button>
+                <div className="divider-text">OR</div>
+                <button className="mode-btn join-btn" onClick={() => setMode('join')}>
+                  🔗 Join Existing Room
+                </button>
+              </div>
+            ) : (
+              <div className="room-form">
+                {mode === 'create' ? (
+                  <>
+                    <p className="form-info">Create a new room for your team</p>
+                    <div className="input-group">
+                      <label>Your Username</label>
+                      <input
+                        type="text"
+                        placeholder="Enter your name"
+                        value={userInput}
+                        onChange={(e) => setUserInput(e.target.value)}
+                        onKeyPress={handleKeyPress}
+                        autoFocus
+                      />
+                    </div>
+                    <button className="action-button create-btn" onClick={handleCreateRoom}>
+                      Create & Enter
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="form-info">Join a room with the room code</p>
+                    <div className="input-group">
+                      <label>Room Code</label>
+                      <input
+                        type="text"
+                        placeholder="e.g., room-ABC123"
+                        value={roomInput}
+                        onChange={(e) => setRoomInput(e.target.value)}
+                        onKeyPress={handleKeyPress}
+                        autoFocus
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label>Your Username</label>
+                      <input
+                        type="text"
+                        placeholder="Enter your name"
+                        value={userInput}
+                        onChange={(e) => setUserInput(e.target.value)}
+                        onKeyPress={handleKeyPress}
+                      />
+                    </div>
+                    <button className="action-button join-btn" onClick={handleJoinRoom}>
+                      Join Room
+                    </button>
+                  </>
+                )}
+
+                <button className="back-button" onClick={() => {
+                  setMode(null);
+                  setRoomInput('');
+                  setUserInput('');
+                }}>
+                  ← Back
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="canvas-container">
-      {/* Left Panel - Controls */}
+    <>
+      {/* Join Another Room Modal */}
+      {showJoinModal && (
+        <div className="modal-overlay" onClick={() => setShowJoinModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h2>🚪 Join Another Room</h2>
+            <p className="modal-subtitle">Switch to a different room</p>
+
+            {!mode ? (
+              <div className="mode-selection">
+                <button className="mode-btn create-btn" onClick={() => setMode('create')}>
+                  ➕ Create New Room
+                </button>
+                <div className="divider-text">OR</div>
+                <button className="mode-btn join-btn" onClick={() => setMode('join')}>
+                  🔗 Join Existing Room
+                </button>
+              </div>
+            ) : (
+              <div className="room-form">
+                {mode === 'create' ? (
+                  <>
+                    <p className="form-info">Create a new room</p>
+                    <div className="input-group">
+                      <label>Your Username</label>
+                      <input
+                        type="text"
+                        placeholder="Enter your name"
+                        value={userInput}
+                        onChange={(e) => setUserInput(e.target.value)}
+                        onKeyPress={handleKeyPress}
+                        autoFocus
+                      />
+                    </div>
+                    <button className="action-button create-btn" onClick={() => {
+                      handleLeaveRoom();
+                      handleCreateRoom();
+                    }}>
+                      Create & Switch
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="form-info">Enter room code to join</p>
+                    <div className="input-group">
+                      <label>Room Code</label>
+                      <input
+                        type="text"
+                        placeholder="e.g., room-ABC123"
+                        value={roomInput}
+                        onChange={(e) => setRoomInput(e.target.value)}
+                        onKeyPress={handleKeyPress}
+                        autoFocus
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label>Your Username</label>
+                      <input
+                        type="text"
+                        placeholder="Enter your name"
+                        value={userInput}
+                        onChange={(e) => setUserInput(e.target.value)}
+                        onKeyPress={handleKeyPress}
+                      />
+                    </div>
+                    <button className="action-button join-btn" onClick={() => {
+                      handleLeaveRoom();
+                      handleJoinRoom();
+                    }}>
+                      Switch Room
+                    </button>
+                  </>
+                )}
+
+                <button className="back-button" onClick={() => {
+                  setMode(null);
+                  setRoomInput('');
+                  setUserInput('');
+                }}>
+                  ← Back
+                </button>
+              </div>
+            )}
+
+            <button className="back-button" onClick={() => setShowJoinModal(false)} style={{marginTop: '10px'}}>
+              ✕ Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+    <div className="canvas-container">{/* Left Panel - Controls */}
       <div className="left-panel">
         <div className="control-card">
           <h3 className="card-title">🎨 Canvas Controls</h3>
@@ -271,6 +551,8 @@ function Canvas({ roomId, userId }) {
             </button>
           </div>
 
+
+
           <button onClick={handleClear} className="btn btn-clear">
             🗑 Clear Canvas
           </button>
@@ -290,6 +572,34 @@ function Canvas({ roomId, userId }) {
             className="drawing-canvas"
           />
           
+          {/* Fixed guest name labels at top-right */}
+          {Object.entries(userLabels)
+            .filter(([uid]) => uid !== userId)
+            .map(([cursorUserId, label], index) => (
+              <div
+                key={`label-${cursorUserId}`}
+                className="guest-label-fixed"
+                style={{
+                  position: 'absolute',
+                  top: `${20 + index * 30}px`,
+                  right: '15px',
+                  pointerEvents: 'none',
+                  backgroundColor: getColorForUser(label),
+                  color: 'white',
+                  padding: '8px 14px',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  whiteSpace: 'nowrap',
+                  zIndex: 1001,
+                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)'
+                }}
+              >
+                ● {label}
+              </div>
+            ))}
+          
+          {/* Moving ghost cursors */}
           {Object.entries(ghostCursors).map(([cursorUserId, pos]) => (
             <div
               key={cursorUserId}
@@ -301,14 +611,15 @@ function Canvas({ roomId, userId }) {
                 pointerEvents: 'none',
                 backgroundColor: getColorForUser(userLabels[cursorUserId]),
                 color: 'white',
-                padding: '6px 10px',
-                borderRadius: '6px',
-                fontSize: '11px',
+                padding: '4px 6px',
+                borderRadius: '4px',
+                fontSize: '9px',
                 fontWeight: 'bold',
                 whiteSpace: 'nowrap',
-                zIndex: 1000,
-                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
-                transition: 'left 0.05s ease-out, top 0.05s ease-out'
+                zIndex: 999,
+                boxShadow: '0 2px 6px rgba(0, 0, 0, 0.15)',
+                transition: 'left 0.05s ease-out, top 0.05s ease-out',
+                opacity: 0.8
               }}
             >
               {userLabels[cursorUserId] || 'User'}
@@ -338,6 +649,14 @@ function Canvas({ roomId, userId }) {
               ))
             )}
           </div>
+          
+          <button 
+            onClick={handleLeaveRoom} 
+            className="btn btn-leave"
+            title="Leave the room"
+          >
+            🚪 Leave Room
+          </button>
         </div>
 
         {/* Share Room Card */}
@@ -352,8 +671,23 @@ function Canvas({ roomId, userId }) {
             </button>
           </div>
         </div>
+
+        {/* Join Another Room Card */}
+        <div className="share-card">
+          <h3 className="card-title">🚪 Switch Room</h3>
+          <p className="share-info">Want to join a different room?</p>
+          
+          <button 
+            onClick={() => setShowJoinModal(true)} 
+            className="btn btn-join-another"
+            title="Join or create another room"
+          >
+            🔗 Join Another Room
+          </button>
+        </div>
       </div>
     </div>
+    </>
   );
 }
 
