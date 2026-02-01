@@ -3,23 +3,31 @@
  * 
  * Handles all canvas rendering operations including:
  * - Drawing strokes with proper styling
+ * - Zoom and pan transformations
  * - Canvas clearing and redrawing
  */
 
 /**
  * Redraw the entire canvas with all strokes
- *
+ * Applies zoom and pan transformations to the canvas
+ * 
  * @param {CanvasRenderingContext2D} ctx - Canvas 2D context
  * @param {Array} strokes - Array of stroke objects to draw
  * @param {HTMLCanvasElement} canvas - Canvas element
+ * @param {number} zoom - Zoom level (1 = 100%, 2 = 200%, etc.)
+ * @param {number} panX - Horizontal pan offset in pixels
+ * @param {number} panY - Vertical pan offset in pixels
  */
-export function redrawCanvas(ctx, strokes, canvas) {
+export function redrawCanvas(ctx, strokes, canvas, zoom = 1, panX = 0, panY = 0) {
   // Clear the entire canvas
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   
   // Save the current context state before applying transformations
   ctx.save();
   
+  // Apply zoom and pan transformations
+  ctx.translate(panX, panY);
+  ctx.scale(zoom, zoom);
 
   // Draw each stroke
   strokes.forEach(stroke => {
