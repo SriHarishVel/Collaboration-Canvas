@@ -2,15 +2,30 @@ const roomManager = require('./rooms');
 
 class StateManager {
   constructor() {
-    this.undoHistory = new Map();
-    // redoHistory is now a Map of roomId -> Map of userId -> Array of redo ops
-    this.redoHistory = new Map();
+    // Store undo/redo stacks per user per room: roomId -> userId -> { undoStack: [], redoStack: [] }
+    this.userStacks = new Map();
+  }
+
+  initializeUserStacks(roomId, userId) {
+    if (!this.userStacks.has(roomId)) {
+      this.userStacks.set(roomId, new Map());
+    }
+    if (!this.userStacks.get(roomId).has(userId)) {
+      this.userStacks.get(roomId).set(userId, {
+        undoStack: [],
+        redoStack: []
+      });
+    }
   }
 
   undo(roomId, userId) {
     const room = roomManager.getRoom(roomId);
     const strokes = room.strokes;
 
+    this.initializeUserStacks(roomId, userId);
+    const userStacks = this.userStacks.get(roomId).get(userId);
+
+    // Find the last stroke by this user
     let lastStrokeIndex = -1;
     for (let i = strokes.length - 1; i >= 0; i--) {
       if (strokes[i].userId === userId) {
@@ -25,79 +40,73 @@ class StateManager {
     }
 
     const removedStroke = strokes.splice(lastStrokeIndex, 1)[0];
-    // Ensure redo history structure exists for this room and user
-    if (!this.redoHistory.has(roomId)) {
-      this.redoHistory.set(roomId, new Map());
-    }
+    userStacks.undoStack.push(removedStroke);
 
-    const roomRedo = this.redoHistory.get(roomId);
-    if (!roomRedo.has(userId)) {
-      roomRedo.set(userId, []);
-    }
-
-    roomRedo.get(userId).push({
-      stroke: removedStroke,
-      timestamp: Date.now()
-    });
-
-    console.log(`Undo: Removed stroke ${removedStroke.id} from room ${roomId}`);
+    console.log(`Undo: Removed stroke ${removedStroke.id} from room ${roomId}. Undo stack size: ${userStacks.undoStack.length}`);
 
     return {
       success: true,
       strokes: room.strokes,
-      removedStroke: removedStroke
+      removedStroke: removedStroke,
+      canUndo: this.canUserUndo(roomId, userId),
+      canRedo: this.canUserRedo(roomId, userId)
     };
   }
 
   redo(roomId, userId) {
-    const roomRedo = this.redoHistory.get(roomId);
-    if (!roomRedo) {
-      console.log(`Redo failed: No history for room ${roomId}`);
-      return null;
-    }
-
-    const userRedo = roomRedo.get(userId) || [];
-    if (userRedo.length === 0) {
-      console.log(`Redo failed: User ${userId} has no redo operations in room ${roomId}`);
-      return null;
-    }
-
-    // Pop the last redo op for this user
-    const redoOp = userRedo.pop();
     const room = roomManager.getRoom(roomId);
+    this.initializeUserStacks(roomId, userId);
+    const userStacks = this.userStacks.get(roomId).get(userId);
 
-    // Restore stroke to the room's strokes
-    room.strokes.push(redoOp.stroke);
+    if (userStacks.undoStack.length === 0) {
+      console.log(`Redo failed: User ${userId} has no undo history in room ${roomId}`);
+      return null;
+    }
 
-    console.log(`Redo: Restored stroke ${redoOp.stroke.id} to room ${roomId}`);
+    const stroke = userStacks.undoStack.pop();
+    room.strokes.push(stroke);
+    userStacks.redoStack.push(stroke);
+
+    console.log(`Redo: Restored stroke ${stroke.id} to room ${roomId}. Undo stack size: ${userStacks.undoStack.length}`);
 
     return {
       success: true,
       strokes: room.strokes,
-      restoredStroke: redoOp.stroke
+      restoredStroke: stroke,
+      canUndo: this.canUserUndo(roomId, userId),
+      canRedo: this.canUserRedo(roomId, userId)
     };
   }
 
-  canUserRedo(roomId, userId) {
-    const roomRedo = this.redoHistory.get(roomId);
-    if (!roomRedo) return false;
+  canUserUndo(roomId, userId) {
+    this.initializeUserStacks(roomId, userId);
+    const userStacks = this.userStacks.get(roomId).get(userId);
+    const room = roomManager.getRoom(roomId);
+    
+    // Can undo if there's at least one stroke by this user
+    const hasUserStroke = room.strokes.some(s => s.userId === userId);
+    return hasUserStroke;
+  }
 
-    const userRedo = roomRedo.get(userId);
-    return Array.isArray(userRedo) && userRedo.length > 0;
+  canUserRedo(roomId, userId) {
+    this.initializeUserStacks(roomId, userId);
+    const userStacks = this.userStacks.get(roomId).get(userId);
+    return userStacks.undoStack.length > 0;
   }
 
   clearRedoHistory(roomId, userId = null) {
-    if (!this.redoHistory.has(roomId)) return;
+    if (!this.userStacks.has(roomId)) return;
 
     if (userId) {
-      const roomRedo = this.redoHistory.get(roomId);
-      if (roomRedo && roomRedo.has(userId)) {
-        roomRedo.delete(userId);
-        console.log(`Cleared redo history for user ${userId} in room ${roomId}`);
+      const userStacks = this.userStacks.get(roomId).get(userId);
+      if (userStacks) {
+        userStacks.undoStack = [];
+        userStacks.redoStack = [];
+        console.log(`Cleared undo/redo history for user ${userId} in room ${roomId}`);
       }
     } else {
-      this.redoHistory.delete(roomId);
-      console.log(`Cleared all redo history for room ${roomId}`);
+      this.userStacks.delete(roomId);
+      console.log(`Cleared all undo/redo history for room ${roomId}`);
     }
   }
 
@@ -143,17 +152,13 @@ class StateManager {
   }
 
   getStateStats(roomId) {
-    const roomRedo = this.redoHistory.get(roomId) || new Map();
-    let redoAvailable = 0;
-    for (const [userId, stack] of roomRedo.entries()) {
-      redoAvailable += (Array.isArray(stack) ? stack.length : 0);
-    }
-
+    const redoStack = this.redoHistory.get(roomId) || [];
     const room = roomManager.getRoomStats(roomId);
+
     return {
       roomId: roomId,
       strokeCount: room ? room.strokeCount : 0,
-      redoAvailable: redoAvailable,
+      redoAvailable: redoStack.length,
       roomStats: room
     };
   }

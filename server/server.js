@@ -70,10 +70,11 @@ io.on("connection", (socket) => {
     const result = stateManager.undo(roomId, socket.id);
     
     if (result) {
-      const canRedo = stateManager.canUserRedo(roomId, socket.id);
       io.to(roomId).emit("sync-state", {
         strokes: result.strokes,
-        canRedo: canRedo
+        userId: socket.id,
+        canUndo: result.canUndo,
+        canRedo: result.canRedo
       });
       console.log(`${userLabel} undid stroke in room ${roomId}`);
     } else {
@@ -85,10 +86,11 @@ io.on("connection", (socket) => {
     const result = stateManager.redo(roomId, socket.id);
     
     if (result) {
-      const canRedo = stateManager.canUserRedo(roomId, socket.id);
       io.to(roomId).emit("sync-state", {
         strokes: result.strokes,
-        canRedo: canRedo
+        userId: socket.id,
+        canUndo: result.canUndo,
+        canRedo: result.canRedo
       });
       console.log(`${userLabel} redid stroke in room ${roomId}`);
     } else {
@@ -107,13 +109,21 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("clear-canvas", () => {
-    stateManager.clearRoomState(roomId);
+  socket.on("clear-canvas", ({ userId }) => {
+    // Only clear strokes from the specific user, not the entire canvas
+    const room = roomManager.getRoom(roomId);
+    const initialLength = room.strokes.length;
+    room.strokes = room.strokes.filter(stroke => stroke.userId !== userId);
+    const removed = initialLength - room.strokes.length;
+    
+    // Clear redo history for this user to prevent redo after clear
+    stateManager.clearRedoHistory(roomId, socket.id);
+    
     io.to(roomId).emit("sync-state", {
-      strokes: [],
+      strokes: room.strokes,
       canRedo: false
     });
-    console.log(`${userLabel} cleared canvas in room ${roomId}`);
+    console.log(`${userLabel} cleared their strokes in room ${roomId} (removed ${removed} strokes)`);
   });
 
   socket.on("disconnect", () => {
