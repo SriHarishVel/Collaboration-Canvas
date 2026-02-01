@@ -3,7 +3,7 @@ import { io } from "socket.io-client";
 const params = new URLSearchParams(window.location.search);
 const room = params.get("room") || "default";
 
-export const socket = io("http://localhost:3001", {
+export const socket = io("http://localhost:3001", "https://collaboration-canvas.onrender.com", {
   query: { room }
 });
 
