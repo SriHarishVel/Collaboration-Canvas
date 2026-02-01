@@ -13,27 +13,43 @@ const io = new Server(server, {
   }
 });
 
-let userCounter = 0;
-const userLabels = new Map();
+const roomUsers = new Map(); // Track users per room
+const userLabels = new Map(); // Track user labels globally
 
 io.on("connection", (socket) => {
   const roomId = socket.handshake.query.room || "default";
   socket.join(roomId);
   
-  userCounter++;
-  const userLabel = `User ${String.fromCharCode(64 + (userCounter % 26 || 26))}`;
-  userLabels.set(socket.id, userLabel);
-  
-  roomManager.addUser(roomId, socket.id);
-  
-  console.log(`${userLabel} (${socket.id}) joined room ${roomId}`);
-  console.log(`Room ${roomId} now has ${io.sockets.adapter.rooms.get(roomId)?.size || 0} users`);
+  let userLabel = null;
 
-  const syncState = stateManager.getSyncState(roomId);
-  const canRedo = stateManager.canUserRedo(roomId, socket.id);
-  socket.emit("sync-state", {
-    strokes: syncState.strokes,
-    canRedo: canRedo
+  // Handle user registration
+  socket.on("register-user", ({ userId, username }) => {
+    userLabel = username || `User ${socket.id.substring(0, 5)}`;
+    userLabels.set(socket.id, userLabel);
+    
+    // Initialize room users list if needed
+    if (!roomUsers.has(roomId)) {
+      roomUsers.set(roomId, new Map());
+    }
+    
+    roomUsers.get(roomId).set(socket.id, userLabel);
+    roomManager.addUser(roomId, socket.id);
+    
+    console.log(`${userLabel} (${socket.id}) joined room ${roomId}`);
+    
+    // Send sync state to new user
+    const syncState = stateManager.getSyncState(roomId);
+    const canRedo = stateManager.canUserRedo(roomId, socket.id);
+    socket.emit("sync-state", {
+      strokes: syncState.strokes,
+      canRedo: canRedo
+    });
+    
+    // Broadcast updated user list to all in room
+    const userList = Array.from(roomUsers.get(roomId).values());
+    io.to(roomId).emit("users-updated", userList);
+    
+    console.log(`Room ${roomId} now has ${userList.length} users: ${userList.join(", ")}`);
   });
 
   socket.on("stroke", (stroke) => {
@@ -107,11 +123,18 @@ io.on("connection", (socket) => {
     console.log(`${userLabel} left room ${roomId}`);
     userLabels.delete(socket.id);
     
-    const room = io.sockets.adapter.rooms.get(roomId);
-    if (room) {
-      console.log(`Room ${roomId} now has ${room.size} users`);
-    } else {
-      console.log(`Room ${roomId} is now empty`);
+    // Update room users list
+    if (roomUsers.has(roomId)) {
+      roomUsers.get(roomId).delete(socket.id);
+      const userList = Array.from(roomUsers.get(roomId).values());
+      io.to(roomId).emit("users-updated", userList);
+      
+      if (userList.length === 0) {
+        roomUsers.delete(roomId);
+        console.log(`Room ${roomId} is now empty`);
+      } else {
+        console.log(`Room ${roomId} now has ${userList.length} users`);
+      }
     }
   });
 });
