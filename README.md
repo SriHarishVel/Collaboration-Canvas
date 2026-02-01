@@ -236,3 +236,9 @@ const userColorPalette = ['#FF6B6B', '#4ECDC4', /* add more colors */];
 - Verify undo/redo state is updated after clearing (clear undoStack/redoStack if needed)
 - Check browser console for JavaScript errors
 
+### Socket Connected but Username Not Displayed
+- User successfully connects to the room
+- Room ID is valid
+- Realtime connection is active
+- Username does not appear in UI or logs
+
