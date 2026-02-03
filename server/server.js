@@ -9,7 +9,7 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const roomManager = require("./rooms");
-const stateManager = require("./drawing-state");
+const stateManager = require("./state-manager");
 
 // Initialize Express application
 const app = express();
